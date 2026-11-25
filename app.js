@@ -26,7 +26,6 @@ const STORAGE_KEYS = {
   PINNED: 'easytreno_pinned_v2',
   HOME: 'easytreno_home_v1',
   THEME: 'easytreno_theme_v1',
-  PROXY: 'easytreno_vt_proxy_v1',
 };
 
 const ROUTE_PRESETS = {
@@ -59,7 +58,6 @@ const state = {
   stationPickerTarget: 'board', // 'board' | 'route-from' | 'route-to'
   routeFrom: DEFAULT_STATIONS[0],
   routeTo: DEFAULT_STATIONS[1],
-  proxyUrl: (localStorage.getItem(STORAGE_KEYS.PROXY) || '').trim().replace(/\/+$/, ''),
 };
 
 // DOM References
@@ -72,7 +70,6 @@ const els = {
   themeToggleBtn: $('theme-toggle-btn'),
   themeIconSun: $('theme-icon-sun'),
   themeIconMoon: $('theme-icon-moon'),
-  settingsBtn: $('settings-btn'),
   pinnedStrip: $('pinned-stations-strip'),
 
   tabBoard: $('tab-board'),
@@ -118,13 +115,6 @@ const els = {
   stationSearchResults: $('station-search-results'),
   pinnedManageSection: $('pinned-manage-section'),
   pinnedManageList: $('pinned-manage-list'),
-
-  settingsSheet: $('settings-sheet-backdrop'),
-  proxyUrlInput: $('proxy-url-input'),
-  saveProxyBtn: $('save-proxy-btn'),
-  clearProxyBtn: $('clear-proxy-btn'),
-  proxyFeedback: $('proxy-feedback'),
-  resetStationsBtn: $('reset-stations-btn'),
 };
 
 // ============================================================================
@@ -410,38 +400,6 @@ async function fetchViaggiatrenoLive(station, boardMode, signal) {
   signal?.addEventListener('abort', onParentAbort, { once: true });
 
   try {
-    // 1) If user configured a custom Cloudflare Worker proxy, call it directly (instant live on ANY station)
-    if (state.proxyUrl) {
-      const endpoint = boardMode === 'arrivals' ? 'arrivi' : 'partenze';
-      const nowStr = new Date().toString();
-      const url = `${state.proxyUrl}/${endpoint}/${encodeURIComponent(station.vtCode)}/${encodeURIComponent(nowStr)}`;
-      const data = await fetchJson(url, timeoutCtrl.signal);
-      const map = new Map();
-      if (Array.isArray(data)) {
-        for (const item of data) {
-          const num = String(item.numeroTreno || '');
-          if (!num) continue;
-          const eff =
-            boardMode === 'arrivals'
-              ? item.binarioEffettivoArrivoDescrizione
-              : item.binarioEffettivoPartenzaDescrizione;
-          const prog =
-            boardMode === 'arrivals'
-              ? item.binarioProgrammatoArrivoDescrizione
-              : item.binarioProgrammatoPartenzaDescrizione;
-          const track = (eff || prog || '').trim() || null;
-          map.set(num, {
-            delay: typeof item.ritardo === 'number' ? item.ritardo : null,
-            track,
-            isActualTrack: Boolean(eff),
-            cancelled: item.provvedimento === 1 || item.tipoTreno === 'ST',
-          });
-        }
-      }
-      return { map, updatedTime: formatTime(new Date()) };
-    }
-
-    // 2) Otherwise use the repo's free auto-updated live-data snapshot (for default stations)
     const feed = await fetchJson(`${LIVE_FEED_URL}?t=${Math.floor(Date.now() / 60000)}`, timeoutCtrl.signal);
     if (!feed?.updatedAt || !feed?.stations?.[station.vtCode]) return empty;
 
@@ -1333,11 +1291,6 @@ function bindEvents() {
     const current = document.documentElement.getAttribute('data-theme') || 'light';
     applyTheme(current === 'dark' ? 'light' : 'dark');
   });
-  els.settingsBtn.addEventListener('click', () => {
-    els.proxyUrlInput.value = state.proxyUrl;
-    els.proxyFeedback.classList.add('hidden');
-    openSheet('settings-sheet-backdrop');
-  });
 
   // View tabs
   els.tabBoard.addEventListener('click', () => switchView('board'));
@@ -1465,41 +1418,6 @@ function bindEvents() {
     els.stationSearchInput.value = '';
     handleStationSearchInput();
     els.stationSearchInput.focus();
-  });
-
-  // Settings
-  els.saveProxyBtn.addEventListener('click', () => {
-    const val = els.proxyUrlInput.value.trim().replace(/\/+$/, '');
-    if (val && !/^https?:\/\/.+/.test(val)) {
-      els.proxyFeedback.textContent = 'Inserisci un URL valido (es. https://mio-worker.workers.dev).';
-      els.proxyFeedback.classList.remove('hidden');
-      return;
-    }
-    state.proxyUrl = val;
-    localStorage.setItem(STORAGE_KEYS.PROXY, val);
-    els.proxyFeedback.textContent = val
-      ? 'Proxy salvato! Aggiorno il tabellone...'
-      : 'Proxy rimosso.';
-    els.proxyFeedback.classList.remove('hidden');
-    loadBoard();
-  });
-
-  els.clearProxyBtn.addEventListener('click', () => {
-    els.proxyUrlInput.value = '';
-    state.proxyUrl = '';
-    localStorage.removeItem(STORAGE_KEYS.PROXY);
-    els.proxyFeedback.textContent = 'Proxy rimosso.';
-    els.proxyFeedback.classList.remove('hidden');
-    loadBoard();
-  });
-
-  els.resetStationsBtn.addEventListener('click', () => {
-    state.pinnedStations = DEFAULT_STATIONS.map((s) => ({ ...s }));
-    state.homeStationId = DEFAULT_STATIONS[0].id;
-    savePinnedStations();
-    localStorage.setItem(STORAGE_KEYS.HOME, state.homeStationId);
-    closeSheet('settings-sheet-backdrop');
-    selectActiveStation(state.pinnedStations[0]);
   });
 
   // Sheet closing (close buttons, backdrop click, Escape key)
