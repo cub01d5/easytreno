@@ -16,25 +16,23 @@ const RAIL_MODES = new Set([
 
 const DEFAULT_STATIONS = [
   { id: 'it-Lombardia-Trenord_S01061', name: 'Vigevano', vtCode: 'S01061', rfiId: '3053' },
-  { id: 'it-trenitalia_01820:station', name: 'Milano Rogoredo', vtCode: 'S01820', rfiId: '1720' },
-  { id: 'it-Lombardia-Trenord_S00034', name: 'Mortara', vtCode: 'S00034', rfiId: '1858' },
-  { id: 'it-Lombardia-Trenord_S01062', name: 'Abbiategrasso', vtCode: 'S01062', rfiId: '367' },
-  { id: 'it-trenitalia_01700:station', name: 'Milano Centrale', vtCode: 'S01700', rfiId: '1728' },
-  { id: 'it-trenitalia_01860:station', name: 'Pavia', vtCode: 'S01860', rfiId: '2046' },
+  { id: 'it-Lombardia-Trenord_S01630', name: 'Milano S. Cristoforo', vtCode: 'S01630', rfiId: '1721' },
+  { id: 'it-Lombardia-Trenord_S01632', name: 'Milano Scalo Romana', vtCode: 'S01632', rfiId: '1717' },
+  { id: 'it-Lombardia-Trenord_S01059', name: 'Albairate-Vermezzo', vtCode: 'S01059', rfiId: '779' },
 ];
 
 const STORAGE_KEYS = {
-  PINNED: 'easytreno_pinned_v1',
+  PINNED: 'easytreno_pinned_v2',
   HOME: 'easytreno_home_v1',
   THEME: 'easytreno_theme_v1',
   PROXY: 'easytreno_vt_proxy_v1',
 };
 
 const ROUTE_PRESETS = {
-  'vig-rog': [DEFAULT_STATIONS[0], DEFAULT_STATIONS[1]],
-  'rog-vig': [DEFAULT_STATIONS[1], DEFAULT_STATIONS[0]],
-  'vig-mor': [DEFAULT_STATIONS[0], DEFAULT_STATIONS[2]],
-  'vig-cen': [DEFAULT_STATIONS[0], DEFAULT_STATIONS[4]],
+  'vig-cri': [DEFAULT_STATIONS[0], DEFAULT_STATIONS[1]],
+  'cri-vig': [DEFAULT_STATIONS[1], DEFAULT_STATIONS[0]],
+  'vig-rom': [DEFAULT_STATIONS[0], DEFAULT_STATIONS[2]],
+  'vig-alb': [DEFAULT_STATIONS[0], DEFAULT_STATIONS[3]],
 };
 
 // Application State
