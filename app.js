@@ -913,6 +913,16 @@ async function openTrainDetailSheet(trainItem) {
       }
     }
 
+    // Find the furthest stop where Viaggiatreno recorded an actual passing time
+    let lastPassedIdx = -1;
+    if (liveStops) {
+      stops.forEach((s, i) => {
+        const vtCode = deriveVtCode(s.stopId);
+        const sl = vtCode ? liveStops[vtCode] : null;
+        if (sl?.st === 1 && sl?.t) lastPassedIdx = i;
+      });
+    }
+
     const timelineHtml = stops
       .map((s, i) => {
         const stopName = cleanStationDisplayName(s.name);
@@ -925,28 +935,39 @@ async function openTrainDetailSheet(trainItem) {
         const stopLive = vtCode && liveStops ? liveStops[vtCode] : null;
 
         const isCancelledStop = Boolean(liveTrain?.c || stopLive?.st === 3);
-        const isPassed = !isCancelledStop && Boolean(stopLive?.st === 1 && stopLive?.t);
+        const hasExactPass = !isCancelledStop && Boolean(stopLive?.st === 1 && stopLive?.t);
+        const isInferredPassed = !isCancelledStop && !hasExactPass && lastPassedIdx !== -1 && i < lastPassedIdx;
+        const isPassed = hasExactPass || isInferredPassed;
 
-        let statusClass = 'is-upcoming';
-        if (isCancelledStop) statusClass = 'is-cancelled-stop';
-        else if (isPassed) statusClass = 'is-passed';
-        else if (i === activeIdx) statusClass = 'is-active';
-        else if (!liveTrain && activeIdx !== -1 && i < activeIdx) statusClass = 'is-past';
+        let classes = [];
+        if (isCancelledStop) {
+          classes.push('is-cancelled-stop');
+        } else if (isPassed) {
+          classes.push('is-passed');
+          if (i === lastPassedIdx) classes.push('is-last-passed');
+        } else if (lastPassedIdx === -1 && activeIdx !== -1 && i < activeIdx) {
+          classes.push('is-past');
+        } else {
+          classes.push('is-future');
+        }
 
         if (i === activeIdx && !isCancelledStop) {
-          statusClass += ' is-active';
+          classes.push('is-active');
         }
 
         let rightCellHtml = '';
         if (isCancelledStop) {
           rightCellHtml = buildDelayPillHtml(null, true, 'Soppressa');
-        } else if (isPassed) {
+        } else if (hasExactPass) {
           rightCellHtml = `
             <span class="stop-actual-time">Passato ${escapeHtml(stopLive.t)}</span>
             ${buildDelayPillHtml(stopLive.d, false)}
           `;
+        } else if (isInferredPassed) {
+          rightCellHtml = `<span class="stop-pending-label">Passato</span>`;
         } else if (liveTrain && !liveTrain.np && typeof liveTrain.r === 'number') {
-          const estTime = addMinutesToIso(schedIso, liveTrain.r);
+          const estDelay = Math.max(0, liveTrain.r);
+          const estTime = addMinutesToIso(schedIso, estDelay);
           rightCellHtml = `
             ${estTime ? `<span class="stop-actual-time is-est">Prev. ${escapeHtml(estTime)}</span>` : ''}
             ${buildDelayPillHtml(liveTrain.r, false)}
@@ -956,7 +977,7 @@ async function openTrainDetailSheet(trainItem) {
         }
 
         return `
-          <div class="stop-row ${statusClass}">
+          <div class="stop-row ${classes.join(' ')}">
             <div class="stop-time-cell">
               <span>${escapeHtml(mainTime)}</span>
             </div>

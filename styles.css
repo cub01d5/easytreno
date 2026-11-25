@@ -1483,12 +1483,12 @@ input:focus-visible {
   bottom: 50%;
 }
 
-.stop-row.is-upcoming .stop-rail-line {
+.stop-row.is-passed .stop-rail-line {
   background-color: var(--accent);
 }
 
-.stop-row.is-active .stop-rail-line {
-  background: linear-gradient(to bottom, var(--border-strong) 0 50%, var(--accent) 50% 100%);
+.stop-row.is-last-passed .stop-rail-line {
+  background: linear-gradient(to bottom, var(--accent) 0 50%, var(--border-strong) 50% 100%);
 }
 
 .stop-rail-dot {
@@ -1501,7 +1501,8 @@ input:focus-visible {
   border: 2.5px solid var(--border-strong);
 }
 
-.stop-row.is-upcoming .stop-rail-dot {
+.stop-row.is-passed .stop-rail-dot {
+  background-color: var(--accent);
   border-color: var(--accent);
 }
 
@@ -1517,7 +1518,7 @@ input:focus-visible {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 6px 0;
+  padding: 6px 4px 6px 0;
   min-width: 0;
 }
 
@@ -1563,15 +1564,6 @@ input:focus-visible {
 .stop-row.is-cancelled-stop .stop-rail-dot {
   background-color: #111315;
   border-color: #111315;
-}
-
-.stop-row.is-passed .stop-rail-dot {
-  background-color: var(--accent);
-  border-color: var(--accent);
-}
-
-.stop-row.is-passed .stop-rail-line {
-  background-color: var(--accent);
 }
 
 .stop-status-cell {
