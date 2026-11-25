@@ -128,8 +128,8 @@ def fetch_train_stops(triple: tuple[str, str, int]) -> tuple[str, dict | None]:
 
         if actual_type == 3:
             st = 3  # cancelled stop
-        elif passed:
-            st = 1  # passed
+        elif passed or actual_type == 1:
+            st = 1  # passed (t may be null if halt has no trackside clock)
         else:
             st = 0  # upcoming / not yet passed
 
@@ -149,6 +149,9 @@ def fetch_train_stops(triple: tuple[str, str, int]) -> tuple[str, dict | None]:
     last_time = (data.get("compOraUltimoRilevamento") or "").strip() or None
     if last_time == "--":
         last_time = None
+    last_ms = data.get("oraUltimoRilevamento")
+    if not isinstance(last_ms, (int, float)) or last_ms <= 0:
+        last_ms = None
 
     cancelled = data.get("provvedimento") == 1 or data.get("tipoTreno") == "ST"
 
@@ -156,6 +159,7 @@ def fetch_train_stops(triple: tuple[str, str, int]) -> tuple[str, dict | None]:
         "r": ritardo,
         "lu": last_st,
         "lo": last_time,
+        "lm": int(last_ms) if last_ms else None,
         "np": bool(data.get("nonPartito")),
         "c": cancelled,
         "f": stops_map,

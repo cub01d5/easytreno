@@ -830,6 +830,21 @@ function addMinutesToIso(iso, deltaMin) {
   return formatTime(new Date(ms + deltaMin * 60000));
 }
 
+function normalizeCheckpointName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/^(p\.?\s*c\.?|p\.?\s*m\.?|b\.?\s*v\.?|bivio|dev\.?|posto\s+\w+)\s+/i, '')
+    .replace(/[^a-z0-9àèéìòù]+/g, ' ')
+    .trim();
+}
+
+function checkpointMatchesStop(checkpointName, stopName) {
+  const a = normalizeCheckpointName(checkpointName);
+  const b = normalizeCheckpointName(stopName);
+  if (!a || !b) return false;
+  return a === b || a.startsWith(`${b} `) || b.startsWith(`${a} `);
+}
+
 async function openTrainDetailSheet(trainItem) {
   const meta = extractTrainMeta(trainItem);
   const dest = cleanStationDisplayName(trainItem.headsign || '');
@@ -913,14 +928,36 @@ async function openTrainDetailSheet(trainItem) {
       }
     }
 
-    // Find the furthest stop where Viaggiatreno recorded an actual passing time
+    // Reconcile Viaggiatreno per-stop readings + trackside checkpoint (e.g. "PC Gaggiano")
     let lastPassedIdx = -1;
+    let checkpointStopIdx = -1;
+
     if (liveStops) {
       stops.forEach((s, i) => {
         const vtCode = deriveVtCode(s.stopId);
         const sl = vtCode ? liveStops[vtCode] : null;
-        if (sl?.st === 1 && sl?.t) lastPassedIdx = i;
+        if (sl?.st === 1) lastPassedIdx = i;
       });
+    }
+
+    if (liveTrain && !liveTrain.c && !liveTrain.np && liveTrain.lu) {
+      const matchIdx = stops.findIndex((s) => checkpointMatchesStop(liveTrain.lu, s.name));
+      if (matchIdx !== -1) {
+        const schedIso = stops[matchIdx].scheduledDeparture || stops[matchIdx].scheduledArrival || stops[matchIdx].departure || stops[matchIdx].arrival;
+        const schedMs = schedIso ? new Date(schedIso).getTime() : NaN;
+        const lastMs = typeof liveTrain.lm === 'number' ? liveTrain.lm : NaN;
+
+        // If checkpoint timestamp is at/after stop's scheduled time (within 1 min tolerance),
+        // or no timestamp available, treat the stop itself as passed at liveTrain.lo;
+        // otherwise (e.g. approaching PC Gaggiano from east), all stops strictly before it are passed.
+        const reachedStop = Number.isNaN(lastMs) || Number.isNaN(schedMs) || lastMs >= schedMs - 60000;
+        if (reachedStop) {
+          checkpointStopIdx = matchIdx;
+          if (matchIdx > lastPassedIdx) lastPassedIdx = matchIdx;
+        } else if (matchIdx - 1 > lastPassedIdx) {
+          lastPassedIdx = matchIdx - 1;
+        }
+      }
     }
 
     const timelineHtml = stops
@@ -935,15 +972,17 @@ async function openTrainDetailSheet(trainItem) {
         const stopLive = vtCode && liveStops ? liveStops[vtCode] : null;
 
         const isCancelledStop = Boolean(liveTrain?.c || stopLive?.st === 3);
-        const hasExactPass = !isCancelledStop && Boolean(stopLive?.st === 1 && stopLive?.t);
-        const isInferredPassed = !isCancelledStop && !hasExactPass && lastPassedIdx !== -1 && i < lastPassedIdx;
-        const isPassed = hasExactPass || isInferredPassed;
+        const hasStopClock = !isCancelledStop && Boolean(stopLive?.st === 1 && stopLive?.t);
+        const hasCheckpointPass =
+          !isCancelledStop && !hasStopClock && i === checkpointStopIdx && Boolean(liveTrain?.lo);
+        const isPassed = !isCancelledStop && (hasStopClock || hasCheckpointPass || (lastPassedIdx !== -1 && i <= lastPassedIdx));
 
-        let classes = [];
+        const classes = [];
         if (isCancelledStop) {
           classes.push('is-cancelled-stop');
         } else if (isPassed) {
           classes.push('is-passed');
+          if (i < lastPassedIdx) classes.push('rail-bottom-passed');
           if (i === lastPassedIdx) classes.push('is-last-passed');
         } else if (lastPassedIdx === -1 && activeIdx !== -1 && i < activeIdx) {
           classes.push('is-past');
@@ -958,12 +997,17 @@ async function openTrainDetailSheet(trainItem) {
         let rightCellHtml = '';
         if (isCancelledStop) {
           rightCellHtml = buildDelayPillHtml(null, true, 'Soppressa');
-        } else if (hasExactPass) {
+        } else if (hasStopClock) {
           rightCellHtml = `
             <span class="stop-actual-time">Passato ${escapeHtml(stopLive.t)}</span>
             ${buildDelayPillHtml(stopLive.d, false)}
           `;
-        } else if (isInferredPassed) {
+        } else if (hasCheckpointPass) {
+          rightCellHtml = `
+            <span class="stop-actual-time">Passato ${escapeHtml(liveTrain.lo)}</span>
+            ${buildDelayPillHtml(liveTrain.r, false)}
+          `;
+        } else if (isPassed) {
           rightCellHtml = `<span class="stop-pending-label">Passato</span>`;
         } else if (liveTrain && !liveTrain.np && typeof liveTrain.r === 'number') {
           const estDelay = Math.max(0, liveTrain.r);
@@ -982,7 +1026,8 @@ async function openTrainDetailSheet(trainItem) {
               <span>${escapeHtml(mainTime)}</span>
             </div>
             <div class="stop-rail-cell" aria-hidden="true">
-              <div class="stop-rail-line"></div>
+              <div class="stop-rail-seg top"></div>
+              <div class="stop-rail-seg bottom"></div>
               <div class="stop-rail-dot"></div>
             </div>
             <div class="stop-name-cell">
