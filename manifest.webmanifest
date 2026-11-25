@@ -1,0 +1,18 @@
+{
+  "name": "EasyTreno — Treni Vigevano e Italia",
+  "short_name": "EasyTreno",
+  "description": "Orari e partenze dei treni da Vigevano e da tutte le stazioni italiane (Trenord e Trenitalia), semplice e mobile-first.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F5F7F5",
+  "theme_color": "#0A6C3D",
+  "lang": "it",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

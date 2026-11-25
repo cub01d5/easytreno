@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>EasyTreno — Treni Vigevano e Stazioni Italiane</title>
+  <meta name="description" content="Consulta velocemente i treni in passaggio da Vigevano e da qualsiasi stazione italiana (Trenord e Trenitalia): partenze, arrivi, fermate e percorsi in un tocco." />
+  <meta name="theme-color" content="#0A6C3D" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="EasyTreno" />
+
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand-group">
+        <img src="./icon.svg" alt="" class="brand-logo" width="34" height="34" />
+        <button type="button" id="station-header-btn" class="station-trigger" aria-label="Cambia stazione">
+          <span class="station-eyebrow">EasyTreno</span>
+          <span class="station-title-row">
+            <h1 id="active-station-name" class="station-title">Vigevano</h1>
+            <svg class="chevron-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+        </button>
+      </div>
+
+      <div class="header-actions">
+        <a id="live-rfi-link" href="https://iechub.rfi.it/ArriviPartenze/ArrivalsDepartures/Monitor?placeId=3053&amp;arrivals=False" target="_blank" rel="noopener noreferrer" class="live-rfi-btn" title="Apri il tabellone RFI in tempo reale (ritardi e binari)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+          <span>Live RFI</span>
+        </a>
+        <button type="button" id="theme-toggle-btn" class="icon-btn" aria-label="Cambia tema chiaro o scuro" title="Tema chiaro/scuro">
+          <svg id="theme-icon-sun" class="hidden" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <svg id="theme-icon-moon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </button>
+        <button type="button" id="settings-btn" class="icon-btn" aria-label="Impostazioni" title="Impostazioni">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <nav class="stations-strip-wrap" aria-label="Stazioni rapide">
+      <div id="pinned-stations-strip" class="stations-strip"></div>
+    </nav>
+  </header>
+
+  <main class="app-shell main-content">
+    <!-- View Mode Switcher -->
+    <div class="view-switcher" role="tablist" aria-label="Modalità di visualizzazione">
+      <button type="button" id="tab-board" class="view-tab active" role="tab" aria-selected="true" aria-controls="board-view">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+          <line x1="7" y1="9" x2="17" y2="9"></line>
+          <line x1="7" y1="14" x2="13" y2="14"></line>
+        </svg>
+        <span>Tabellone</span>
+      </button>
+      <button type="button" id="tab-route" class="view-tab" role="tab" aria-selected="false" aria-controls="route-view">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="6" cy="6" r="3"></circle>
+          <circle cx="18" cy="18" r="3"></circle>
+          <path d="M9 6h5a4 4 0 0 1 4 4v5"></path>
+        </svg>
+        <span>Cerca percorso</span>
+      </button>
+    </div>
+
+    <!-- STATION BOARD VIEW -->
+    <section id="board-view" role="tabpanel" aria-labelledby="tab-board">
+      <div class="controls-panel">
+        <div class="controls-top-row">
+          <div class="segmented" role="group" aria-label="Tipo di passaggio">
+            <button type="button" id="mode-departures" class="segmented-btn active" aria-pressed="true">Partenze</button>
+            <button type="button" id="mode-arrivals" class="segmented-btn" aria-pressed="false">Arrivi</button>
+          </div>
+
+          <div class="refresh-group">
+            <span id="last-updated-label" class="updated-label" aria-live="polite">--:--</span>
+            <button type="button" id="refresh-btn" class="refresh-btn" aria-label="Aggiorna orari">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span>Aggiorna</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Quick Time Presets -->
+        <div id="time-presets-row" class="pills-row" role="group" aria-label="Fascia oraria rapida">
+          <button type="button" class="time-pill active" data-time-preset="now">Adesso</button>
+          <button type="button" class="time-pill" data-time-preset="+1h">+1 ora</button>
+          <button type="button" class="time-pill" data-time-preset="+2h">+2 ore</button>
+          <button type="button" class="time-pill" data-time-preset="evening">Stasera 18:00</button>
+          <button type="button" class="time-pill" data-time-preset="tomorrow">Domani 07:00</button>
+          <button type="button" id="custom-time-toggle" class="time-pill" data-time-preset="custom">Scegli data/ora</button>
+        </div>
+
+        <!-- Custom Date/Time Picker -->
+        <div id="custom-time-box" class="custom-time-box hidden">
+          <label for="board-datetime-input" class="sr-only">Scegli data e ora</label>
+          <input type="datetime-local" id="board-datetime-input" class="datetime-input" />
+          <button type="button" id="apply-custom-time-btn" class="primary-btn">Mostra</button>
+        </div>
+
+        <!-- Auto-populated Direction Filter -->
+        <div id="direction-filter-row" class="pills-row hidden" role="group" aria-label="Filtra per direzione"></div>
+      </div>
+
+      <div class="board-meta-bar">
+        <div class="board-meta-left">
+          <span id="board-summary-text">Prossimi treni · Vigevano</span>
+          <span id="proxy-status-badge" class="proxy-active-badge hidden">Live Viaggiatreno</span>
+        </div>
+        <span>Trenord · Trenitalia</span>
+      </div>
+
+      <div id="trains-list" class="trains-list" aria-live="polite"></div>
+
+      <div id="pagination-bar" class="pagination-bar hidden">
+        <button type="button" id="page-earlier-btn" class="page-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          <span>Prima</span>
+        </button>
+        <button type="button" id="page-now-btn" class="page-btn">Adesso</button>
+        <button type="button" id="page-later-btn" class="page-btn">
+          <span>Dopo</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- ROUTE PLANNER VIEW -->
+    <section id="route-view" class="hidden" role="tabpanel" aria-labelledby="tab-route">
+      <div class="planner-card">
+        <div class="planner-inputs-grid">
+          <div class="planner-fields">
+            <button type="button" id="route-from-btn" class="station-select-btn" aria-label="Scegli stazione di partenza">
+              <span class="station-dot from" aria-hidden="true"></span>
+              <span class="station-select-text">
+                <span class="station-select-label">Partenza</span>
+                <span id="route-from-label" class="station-select-value">Vigevano</span>
+              </span>
+            </button>
+            <button type="button" id="route-to-btn" class="station-select-btn" aria-label="Scegli stazione di arrivo">
+              <span class="station-dot to" aria-hidden="true"></span>
+              <span class="station-select-text">
+                <span class="station-select-label">Arrivo</span>
+                <span id="route-to-label" class="station-select-value">Milano Rogoredo</span>
+              </span>
+            </button>
+          </div>
+          <button type="button" id="route-swap-btn" class="swap-btn" aria-label="Inverti partenza e arrivo" title="Inverti">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="17 1 21 5 17 9"></polyline>
+              <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+              <polyline points="7 23 3 19 7 15"></polyline>
+              <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div class="planner-presets" aria-label="Tratte rapide">
+          <button type="button" class="dir-pill" data-route-preset="vig-rog">Vigevano → MI Rogoredo</button>
+          <button type="button" class="dir-pill" data-route-preset="rog-vig">MI Rogoredo → Vigevano</button>
+          <button type="button" class="dir-pill" data-route-preset="vig-mor">Vigevano → Mortara</button>
+          <button type="button" class="dir-pill" data-route-preset="vig-cen">Vigevano → MI Centrale</button>
+        </div>
+
+        <div class="custom-time-box" style="border-top: 1px solid var(--border-subtle); padding-top: 10px;">
+          <label for="route-datetime-input" class="sr-only">Data e ora di partenza</label>
+          <input type="datetime-local" id="route-datetime-input" class="datetime-input" />
+          <button type="button" id="route-search-btn" class="primary-btn">Cerca treni</button>
+        </div>
+      </div>
+
+      <div id="route-results-list" class="trains-list" aria-live="polite"></div>
+    </section>
+
+    <footer class="app-footer">
+      <span>Dati orari ufficiali Trenord &amp; Trenitalia via <a href="https://transitous.org/" target="_blank" rel="noopener noreferrer">Transitous</a> (open-source, gratis).</span>
+      <span>Per binari e ritardi in tempo reale usa il tasto <strong>Live RFI</strong> in alto.</span>
+    </footer>
+  </main>
+
+  <!-- TRAIN DETAIL BOTTOM SHEET -->
+  <div id="train-sheet-backdrop" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="train-sheet-title" aria-hidden="true">
+    <div class="sheet-dialog">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-header">
+        <div>
+          <h2 id="train-sheet-title" class="sheet-title">Dettaglio treno</h2>
+          <p id="train-sheet-subtitle" class="sheet-subtitle"></p>
+        </div>
+        <button type="button" class="sheet-close-btn" data-close-sheet="train-sheet-backdrop" aria-label="Chiudi">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div id="train-sheet-body" class="sheet-body"></div>
+    </div>
+  </div>
+
+  <!-- STATION SEARCH / MANAGE BOTTOM SHEET -->
+  <div id="station-sheet-backdrop" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="station-sheet-title" aria-hidden="true">
+    <div class="sheet-dialog">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-header">
+        <div>
+          <h2 id="station-sheet-title" class="sheet-title">Cerca o aggiungi stazione</h2>
+          <p id="station-sheet-subtitle" class="sheet-subtitle">Tutte le stazioni Trenord e Trenitalia</p>
+        </div>
+        <button type="button" class="sheet-close-btn" data-close-sheet="station-sheet-backdrop" aria-label="Chiudi">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="sheet-body">
+        <div class="search-input-wrap">
+          <svg class="search-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="search" id="station-search-input" class="search-input" placeholder="Es. Milano Porta Garibaldi, Pavia, Novara..." autocomplete="off" />
+          <button type="button" id="station-search-clear" class="search-clear-btn hidden" aria-label="Cancella ricerca">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+
+        <div id="station-search-results" class="station-results-list"></div>
+
+        <div id="pinned-manage-section">
+          <h3 class="section-heading" style="margin-bottom: 8px;">Le tue stazioni rapide</h3>
+          <div id="pinned-manage-list" class="pinned-manage-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS BOTTOM SHEET -->
+  <div id="settings-sheet-backdrop" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="settings-sheet-title" aria-hidden="true">
+    <div class="sheet-dialog">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-header">
+        <div>
+          <h2 id="settings-sheet-title" class="sheet-title">Impostazioni</h2>
+          <p class="sheet-subtitle">Personalizza EasyTreno sul tuo telefono</p>
+        </div>
+        <button type="button" class="sheet-close-btn" data-close-sheet="settings-sheet-backdrop" aria-label="Chiudi">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="sheet-body">
+        <div class="settings-group">
+          <span class="settings-label">Proxy Live Viaggiatreno (opzionale)</span>
+          <p class="settings-hint">
+            Le API Viaggiatreno di Trenitalia sono solo HTTP senza CORS. Se distribuisci il piccolo Cloudflare Worker incluso nella repository, incolla qui l'URL per vedere ritardi e binari live direttamente nelle card.
+          </p>
+          <label for="proxy-url-input" class="sr-only">URL Proxy Viaggiatreno</label>
+          <input type="url" id="proxy-url-input" class="text-input" placeholder="https://tuo-worker.workers.dev" />
+          <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <button type="button" id="save-proxy-btn" class="primary-btn" style="flex: 1;">Salva</button>
+            <button type="button" id="clear-proxy-btn" class="secondary-btn">Rimuovi</button>
+          </div>
+          <p id="proxy-feedback" class="settings-hint hidden"></p>
+        </div>
+
+        <div class="settings-group">
+          <span class="settings-label">Ripristina stazioni predefinite</span>
+          <p class="settings-hint">Riporta Vigevano come stazione principale e ripristina i collegamenti rapidi predefiniti.</p>
+          <button type="button" id="reset-stations-btn" class="secondary-btn" style="align-self: flex-start;">Ripristina predefinite</button>
+        </div>
+
+        <div class="settings-group">
+          <span class="settings-label">Informazioni sui dati</span>
+          <p class="settings-hint">
+            EasyTreno usa l'API pubblica e gratuita <strong>Transitous</strong> (basata sui feed GTFS ufficiali di Trenord e Trenitalia) e il monitor live ufficiale <strong>RFI</strong>. Funziona al 100% lato browser, senza tracciamento e senza server a pagamento.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js" type="module"></script>
+</body>
+</html>
