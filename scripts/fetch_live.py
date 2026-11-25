@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Fetch live Viaggiatreno departures & arrivals for EasyTreno stations."""
+"""Fetch live Viaggiatreno departures, arrivals, and per-stop actual passing times for EasyTreno."""
 
 import datetime
 import json
 import sys
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from zoneinfo import ZoneInfo
 
 STATIONS = {
@@ -17,10 +18,10 @@ STATIONS = {
 
 BASE_URL = "http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EasyTreno/1.0)"}
+ROME_TZ = ZoneInfo("Europe/Rome")
 
 
 def format_vt_date(dt: datetime.datetime) -> str:
-    # Viaggiatreno requires English weekday/month abbreviations + GMT offset
     days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     tz_off = dt.strftime("%z") or "+0100"
@@ -30,22 +31,34 @@ def format_vt_date(dt: datetime.datetime) -> str:
     )
 
 
-def fetch_board(kind: str, station_code: str, dt_str: str) -> dict:
-    url = f"{BASE_URL}/{kind}/{station_code}/{urllib.parse.quote(dt_str)}"
+def ms_to_rome_hhmm(ms) -> str | None:
+    if not isinstance(ms, (int, float)) or ms <= 0:
+        return None
+    dt = datetime.datetime.fromtimestamp(ms / 1000.0, tz=ROME_TZ)
+    return dt.strftime("%H:%M")
+
+
+def fetch_json(url: str, timeout: int = 12):
     req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", errors="replace").strip()
+        if not raw:
+            return None
+        return json.loads(raw)
+
+
+def fetch_board(kind: str, station_code: str, dt_str: str) -> tuple[dict, dict]:
+    url = f"{BASE_URL}/{kind}/{station_code}/{urllib.parse.quote(dt_str)}"
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            raw = resp.read().decode("utf-8", errors="replace").strip()
-            if not raw:
-                return {}
-            data = json.loads(raw)
+        data = fetch_json(url, timeout=12)
     except Exception as exc:
         print(f"Warn: failed {kind}/{station_code}: {exc}", file=sys.stderr)
-        return {}
+        return {}, {}
 
-    result = {}
+    board = {}
+    triples = {}
     if not isinstance(data, list):
-        return result
+        return board, triples
 
     is_arr = kind == "arrivi"
     for item in data:
@@ -63,37 +76,123 @@ def fetch_board(kind: str, station_code: str, dt_str: str) -> dict:
         provv = item.get("provvedimento")
         cancelled = provv == 1 or item.get("tipoTreno") == "ST"
 
-        result[num] = {
-            "d": ritardo,  # delay in minutes (int or null)
-            "b": bin_eff or bin_prog,  # platform number string or null
-            "be": bool(bin_eff),  # True if actual/confirmed live platform
-            "c": cancelled,  # True if cancelled
+        board[num] = {
+            "d": ritardo,
+            "b": bin_eff or bin_prog,
+            "be": bool(bin_eff),
+            "c": cancelled,
             "np": bool(item.get("nonPartito")),
             "in": bool(item.get("inStazione")),
         }
-    return result
+
+        cod_orig = item.get("codOrigine")
+        ts = item.get("dataPartenzaTreno")
+        if cod_orig and ts:
+            triples[num] = (cod_orig, num, ts)
+
+    return board, triples
+
+
+def fetch_train_stops(triple: tuple[str, str, int]) -> tuple[str, dict | None]:
+    orig, num, ts = triple
+    url = f"{BASE_URL}/andamentoTreno/{orig}/{num}/{ts}"
+    try:
+        data = fetch_json(url, timeout=10)
+    except Exception:
+        return num, None
+
+    if not isinstance(data, dict):
+        return num, None
+
+    stops_map = {}
+    for f in data.get("fermate") or []:
+        stop_id = (f.get("id") or "").strip()
+        if not stop_id:
+            continue
+        actual_type = f.get("actualFermataType")
+        part_reale = f.get("partenzaReale")
+        arr_reale = f.get("arrivoReale")
+        eff = f.get("effettiva")
+
+        actual_ms = part_reale or arr_reale or eff
+        passed = bool(actual_ms) and actual_type != 3
+
+        delay = None
+        if passed:
+            if part_reale and isinstance(f.get("ritardoPartenza"), int):
+                delay = f.get("ritardoPartenza")
+            elif arr_reale and isinstance(f.get("ritardoArrivo"), int):
+                delay = f.get("ritardoArrivo")
+            elif isinstance(f.get("ritardo"), int):
+                delay = f.get("ritardo")
+
+        if actual_type == 3:
+            st = 3  # cancelled stop
+        elif passed:
+            st = 1  # passed
+        else:
+            st = 0  # upcoming / not yet passed
+
+        stops_map[stop_id] = {
+            "t": ms_to_rome_hhmm(actual_ms) if passed else None,
+            "d": delay,
+            "st": st,
+        }
+
+    ritardo = data.get("ritardo")
+    if not isinstance(ritardo, int):
+        ritardo = None
+
+    last_st = (data.get("stazioneUltimoRilevamento") or "").strip()
+    if last_st == "--":
+        last_st = None
+    last_time = (data.get("compOraUltimoRilevamento") or "").strip() or None
+    if last_time == "--":
+        last_time = None
+
+    cancelled = data.get("provvedimento") == 1 or data.get("tipoTreno") == "ST"
+
+    return num, {
+        "r": ritardo,
+        "lu": last_st,
+        "lo": last_time,
+        "np": bool(data.get("nonPartito")),
+        "c": cancelled,
+        "f": stops_map,
+    }
 
 
 def main() -> None:
-    now_rome = datetime.datetime.now(ZoneInfo("Europe/Rome"))
+    now_rome = datetime.datetime.now(ROME_TZ)
     dt_str = format_vt_date(now_rome)
 
     payload = {
         "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "romeTime": now_rome.strftime("%H:%M"),
         "stations": {},
+        "trains": {},
     }
 
+    all_triples = {}
     for code in STATIONS:
-        payload["stations"][code] = {
-            "partenze": fetch_board("partenze", code, dt_str),
-            "arrivi": fetch_board("arrivi", code, dt_str),
-        }
+        part, t_part = fetch_board("partenze", code, dt_str)
+        arr, t_arr = fetch_board("arrivi", code, dt_str)
+        payload["stations"][code] = {"partenze": part, "arrivi": arr}
+        all_triples.update(t_part)
+        all_triples.update(t_arr)
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for num, info in ex.map(fetch_train_stops, all_triples.values()):
+            if info:
+                payload["trains"][num] = info
 
     out_path = sys.argv[1] if len(sys.argv) > 1 else "live.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"Wrote {out_path} at {payload['romeTime']} ({len(payload['stations'])} stations)")
+    print(
+        f"Wrote {out_path} at {payload['romeTime']} "
+        f"({len(payload['stations'])} stations, {len(payload['trains'])} trains)"
+    )
 
 
 if __name__ == "__main__":

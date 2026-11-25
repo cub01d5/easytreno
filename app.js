@@ -47,6 +47,7 @@ const state = {
   activeDirection: 'ALL',
   rawTrains: [],
   liveMap: new Map(), // trainNumber -> { delay, track, isActualTrack, cancelled }
+  liveTrains: {}, // trainNumber -> { r, lu, lo, np, c, f: { vtStopCode: { t, d, st } } }
   liveUpdatedTime: null,
   nextCursor: null,
   prevCursor: null,
@@ -406,6 +407,8 @@ async function fetchViaggiatrenoLive(station, boardMode, signal) {
     // Ignore stale snapshots older than 45 minutes
     const ageMin = (Date.now() - new Date(feed.updatedAt).getTime()) / 60000;
     if (ageMin > 45) return empty;
+
+    state.liveTrains = feed.trains && typeof feed.trains === 'object' ? feed.trains : {};
 
     const bucket = feed.stations[station.vtCode][boardMode === 'arrivals' ? 'arrivi' : 'partenze'] || {};
     const map = new Map();
@@ -806,6 +809,27 @@ function updatePaginationButtons() {
 // Train Detail Bottom Sheet (All Stops Timeline)
 // ============================================================================
 
+function buildDelayPillHtml(delayMin, cancelled = false, cancelledLabel = 'Cancellato') {
+  if (cancelled) {
+    return `<span class="train-delay-pill cancelled">${escapeHtml(cancelledLabel)}</span>`;
+  }
+  if (typeof delayMin !== 'number') return '';
+  if (delayMin <= 0) {
+    return '<span class="train-delay-pill ontime">In orario</span>';
+  }
+  if (delayMin <= 10) {
+    return `<span class="train-delay-pill minor">+${delayMin} min</span>`;
+  }
+  return `<span class="train-delay-pill major">+${delayMin} min</span>`;
+}
+
+function addMinutesToIso(iso, deltaMin) {
+  if (!iso || typeof deltaMin !== 'number') return null;
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return null;
+  return formatTime(new Date(ms + deltaMin * 60000));
+}
+
 async function openTrainDetailSheet(trainItem) {
   const meta = extractTrainMeta(trainItem);
   const dest = cleanStationDisplayName(trainItem.headsign || '');
@@ -856,25 +880,85 @@ async function openTrainDetailSheet(trainItem) {
     const destName = cleanStationDisplayName(leg.to.name);
     els.trainSheetSubtitle.textContent = `${originName} → ${destName} · ${stops.length} fermate`;
 
+    // Look up live Viaggiatreno stop-by-stop info for today's trains
+    const isToday = isSameRomeDay(state.targetDate, new Date());
+    const liveTrain = isToday && meta.number ? state.liveTrains?.[meta.number] || null : null;
+    const liveStops = liveTrain?.f || null;
+
+    let bannerHtml = '';
+    if (liveTrain) {
+      if (liveTrain.c) {
+        bannerHtml = `
+          <div class="train-live-banner">
+            <span>Treno <strong>cancellato</strong></span>
+            ${buildDelayPillHtml(null, true, 'Cancellato')}
+          </div>
+        `;
+      } else if (liveTrain.lu) {
+        const lastSt = cleanStationDisplayName(liveTrain.lu);
+        const lastAt = liveTrain.lo ? ` alle <strong>${escapeHtml(liveTrain.lo)}</strong>` : '';
+        bannerHtml = `
+          <div class="train-live-banner">
+            <span>Ultimo passaggio: <strong>${escapeHtml(lastSt)}</strong>${lastAt}</span>
+            ${buildDelayPillHtml(liveTrain.r, false)}
+          </div>
+        `;
+      } else if (liveTrain.np) {
+        bannerHtml = `
+          <div class="train-live-banner">
+            <span>Stato: <strong>Non ancora partito</strong></span>
+            ${buildDelayPillHtml(liveTrain.r, false)}
+          </div>
+        `;
+      }
+    }
+
     const timelineHtml = stops
       .map((s, i) => {
         const stopName = cleanStationDisplayName(s.name);
-        const arr = s.arrival || s.scheduledArrival;
-        const dep = s.departure || s.scheduledDeparture;
-        const mainTime = dep ? formatTime(dep) : formatTime(arr);
-        const subTime = arr && dep && formatTime(arr) !== formatTime(dep) ? `arr. ${formatTime(arr)}` : '';
+        const arr = s.scheduledArrival || s.arrival;
+        const dep = s.scheduledDeparture || s.departure;
+        const schedIso = dep || arr;
+        const mainTime = formatTime(schedIso);
+
+        const vtCode = deriveVtCode(s.stopId);
+        const stopLive = vtCode && liveStops ? liveStops[vtCode] : null;
+
+        const isCancelledStop = Boolean(liveTrain?.c || stopLive?.st === 3);
+        const isPassed = !isCancelledStop && Boolean(stopLive?.st === 1 && stopLive?.t);
 
         let statusClass = 'is-upcoming';
-        if (i === activeIdx) statusClass = 'is-active';
-        else if (activeIdx !== -1 && i < activeIdx) statusClass = 'is-past';
+        if (isCancelledStop) statusClass = 'is-cancelled-stop';
+        else if (isPassed) statusClass = 'is-passed';
+        else if (i === activeIdx) statusClass = 'is-active';
+        else if (!liveTrain && activeIdx !== -1 && i < activeIdx) statusClass = 'is-past';
 
-        const canJump = Boolean(s.stopId && s.stopId !== state.activeStation?.id);
+        if (i === activeIdx && !isCancelledStop) {
+          statusClass += ' is-active';
+        }
+
+        let rightCellHtml = '';
+        if (isCancelledStop) {
+          rightCellHtml = buildDelayPillHtml(null, true, 'Soppressa');
+        } else if (isPassed) {
+          rightCellHtml = `
+            <span class="stop-actual-time">Passato ${escapeHtml(stopLive.t)}</span>
+            ${buildDelayPillHtml(stopLive.d, false)}
+          `;
+        } else if (liveTrain && !liveTrain.np && typeof liveTrain.r === 'number') {
+          const estTime = addMinutesToIso(schedIso, liveTrain.r);
+          rightCellHtml = `
+            ${estTime ? `<span class="stop-actual-time is-est">Prev. ${escapeHtml(estTime)}</span>` : ''}
+            ${buildDelayPillHtml(liveTrain.r, false)}
+          `;
+        } else {
+          rightCellHtml = `<span class="stop-pending-label">Previsto</span>`;
+        }
 
         return `
           <div class="stop-row ${statusClass}">
             <div class="stop-time-cell">
               <span>${escapeHtml(mainTime)}</span>
-              ${subTime ? `<span class="stop-time-sub">${escapeHtml(subTime)}</span>` : ''}
             </div>
             <div class="stop-rail-cell" aria-hidden="true">
               <div class="stop-rail-line"></div>
@@ -883,34 +967,15 @@ async function openTrainDetailSheet(trainItem) {
             <div class="stop-name-cell">
               <span class="stop-name">${escapeHtml(stopName)}</span>
             </div>
-            ${
-              canJump
-                ? `<button type="button" class="stop-jump-btn" data-jump-stop-id="${escapeHtml(s.stopId)}" data-jump-stop-name="${escapeHtml(stopName)}">Tabellone</button>`
-                : '<span></span>'
-            }
+            <div class="stop-status-cell">
+              ${rightCellHtml}
+            </div>
           </div>
         `;
       })
       .join('');
 
-    els.trainSheetBody.innerHTML = `<div class="stops-timeline">${timelineHtml}</div>`;
-
-    els.trainSheetBody.querySelectorAll('.stop-jump-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = btn.dataset.jumpStopId;
-        const name = btn.dataset.jumpStopName;
-        const def = DEFAULT_STATIONS.find((d) => d.id === id);
-        const st = {
-          id,
-          name,
-          vtCode: def?.vtCode || deriveVtCode(id),
-          rfiId: def?.rfiId || null,
-        };
-        closeSheet('train-sheet-backdrop');
-        switchView('board');
-        pinAndSelectStation(st);
-      });
-    });
+    els.trainSheetBody.innerHTML = `${bannerHtml}<div class="stops-timeline">${timelineHtml}</div>`;
   } catch {
     els.trainSheetBody.innerHTML = `
       <div class="state-card">

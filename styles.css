@@ -1537,20 +1537,71 @@ input:focus-visible {
   color: var(--accent-ink);
 }
 
-.stop-jump-btn {
-  align-self: center;
-  height: 30px;
-  padding: 0 9px;
-  border-radius: 8px;
-  font-size: 0.74rem;
-  font-weight: 700;
+.train-live-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
   color: var(--ink-secondary);
-  background-color: var(--bg-surface-subtle);
 }
 
-.stop-jump-btn:hover {
-  background-color: var(--accent-soft);
-  color: var(--accent-ink);
+.train-live-banner strong {
+  color: var(--ink-primary);
+}
+
+.stop-row.is-cancelled-stop .stop-name,
+.stop-row.is-cancelled-stop .stop-time-cell {
+  text-decoration: line-through;
+  color: var(--ink-muted);
+}
+
+.stop-row.is-cancelled-stop .stop-rail-dot {
+  background-color: #111315;
+  border-color: #111315;
+}
+
+.stop-row.is-passed .stop-rail-dot {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+.stop-row.is-passed .stop-rail-line {
+  background-color: var(--accent);
+}
+
+.stop-status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 0;
+  text-align: right;
+}
+
+.stop-actual-time {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-primary);
+  white-space: nowrap;
+}
+
+.stop-actual-time.is-est {
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.stop-pending-label {
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+  white-space: nowrap;
 }
 
 /* Settings Fields */
