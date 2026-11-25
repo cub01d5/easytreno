@@ -4,6 +4,7 @@
  */
 
 const TRANSITOUS_BASE = 'https://api.transitous.org/api/v1';
+const LIVE_FEED_URL = 'https://raw.githubusercontent.com/cub01d5/easytreno/live-data/live.json';
 
 const RAIL_MODES = new Set([
   'RAIL',
@@ -46,7 +47,8 @@ const state = {
   targetDate: new Date(),
   activeDirection: 'ALL',
   rawTrains: [],
-  liveMap: new Map(), // trainNumber -> { delay, track, cancelled }
+  liveMap: new Map(), // trainNumber -> { delay, track, isActualTrack, cancelled }
+  liveUpdatedTime: null,
   nextCursor: null,
   prevCursor: null,
   isLoading: false,
@@ -399,10 +401,8 @@ async function searchItalianRailStations(query, signal) {
 }
 
 async function fetchViaggiatrenoLive(station, boardMode, signal) {
-  if (!state.proxyUrl || !station?.vtCode) return new Map();
-  const endpoint = boardMode === 'arrivals' ? 'arrivi' : 'partenze';
-  const nowStr = new Date().toString(); // Viaggiatreno expects JS Date.toString()
-  const url = `${state.proxyUrl}/${endpoint}/${encodeURIComponent(station.vtCode)}/${encodeURIComponent(nowStr)}`;
+  const empty = { map: new Map(), updatedTime: null };
+  if (!station?.vtCode) return empty;
 
   const timeoutCtrl = new AbortController();
   const timer = setTimeout(() => timeoutCtrl.abort(), 5000);
@@ -410,32 +410,58 @@ async function fetchViaggiatrenoLive(station, boardMode, signal) {
   signal?.addEventListener('abort', onParentAbort, { once: true });
 
   try {
-    const data = await fetchJson(url, timeoutCtrl.signal);
-    const map = new Map();
-    if (Array.isArray(data)) {
-      for (const item of data) {
-        const num = String(item.numeroTreno || '');
-        if (!num) continue;
-        const track =
-          boardMode === 'arrivals'
-            ? item.binarioEffettivoArrivoDescrizione || item.binarioProgrammatoArrivoDescrizione
-            : item.binarioEffettivoPartenzaDescrizione || item.binarioProgrammatoPartenzaDescrizione;
-        map.set(num, {
-          delay: typeof item.ritardo === 'number' ? item.ritardo : null,
-          track: track ? String(track).trim() : null,
-          isActualTrack: Boolean(
+    // 1) If user configured a custom Cloudflare Worker proxy, call it directly (instant live on ANY station)
+    if (state.proxyUrl) {
+      const endpoint = boardMode === 'arrivals' ? 'arrivi' : 'partenze';
+      const nowStr = new Date().toString();
+      const url = `${state.proxyUrl}/${endpoint}/${encodeURIComponent(station.vtCode)}/${encodeURIComponent(nowStr)}`;
+      const data = await fetchJson(url, timeoutCtrl.signal);
+      const map = new Map();
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          const num = String(item.numeroTreno || '');
+          if (!num) continue;
+          const eff =
             boardMode === 'arrivals'
               ? item.binarioEffettivoArrivoDescrizione
-              : item.binarioEffettivoPartenzaDescrizione
-          ),
-          cancelled: item.provvedimento === 1,
-          inStation: Boolean(item.inStazione),
-        });
+              : item.binarioEffettivoPartenzaDescrizione;
+          const prog =
+            boardMode === 'arrivals'
+              ? item.binarioProgrammatoArrivoDescrizione
+              : item.binarioProgrammatoPartenzaDescrizione;
+          const track = (eff || prog || '').trim() || null;
+          map.set(num, {
+            delay: typeof item.ritardo === 'number' ? item.ritardo : null,
+            track,
+            isActualTrack: Boolean(eff),
+            cancelled: item.provvedimento === 1 || item.tipoTreno === 'ST',
+          });
+        }
       }
+      return { map, updatedTime: formatTime(new Date()) };
     }
-    return map;
+
+    // 2) Otherwise use the repo's free auto-updated live-data snapshot (for default stations)
+    const feed = await fetchJson(`${LIVE_FEED_URL}?t=${Math.floor(Date.now() / 60000)}`, timeoutCtrl.signal);
+    if (!feed?.updatedAt || !feed?.stations?.[station.vtCode]) return empty;
+
+    // Ignore stale snapshots older than 45 minutes
+    const ageMin = (Date.now() - new Date(feed.updatedAt).getTime()) / 60000;
+    if (ageMin > 45) return empty;
+
+    const bucket = feed.stations[station.vtCode][boardMode === 'arrivals' ? 'arrivi' : 'partenze'] || {};
+    const map = new Map();
+    for (const [num, entry] of Object.entries(bucket)) {
+      map.set(num, {
+        delay: typeof entry.d === 'number' ? entry.d : null,
+        track: entry.b ? String(entry.b).trim() : null,
+        isActualTrack: Boolean(entry.be),
+        cancelled: Boolean(entry.c),
+      });
+    }
+    return { map, updatedTime: feed.romeTime || formatTime(feed.updatedAt) };
   } catch {
-    return new Map();
+    return empty;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onParentAbort);
@@ -545,15 +571,14 @@ async function loadBoard({ cursor = null } = {}) {
     url = `${TRANSITOUS_BASE}/stoptimes?stopId=${encodeURIComponent(stopId)}&mode=RAIL&n=18&time=${encodeURIComponent(state.targetDate.toISOString())}`;
   }
 
-  const shouldFetchLive =
-    Boolean(state.proxyUrl) && isSameRomeDay(state.targetDate, new Date()) && !cursor;
+  const shouldFetchLive = isSameRomeDay(state.targetDate, new Date()) && !cursor;
 
   try {
-    const [data, liveMap] = await Promise.all([
+    const [data, liveResult] = await Promise.all([
       fetchJson(url, controller.signal),
       shouldFetchLive
         ? fetchViaggiatrenoLive(state.activeStation, state.boardMode, controller.signal)
-        : Promise.resolve(new Map()),
+        : Promise.resolve({ map: new Map(), updatedTime: null }),
     ]);
 
     if (controller.signal.aborted) return;
@@ -577,11 +602,19 @@ async function loadBoard({ cursor = null } = {}) {
     }
 
     state.rawTrains = items;
-    state.liveMap = liveMap;
+    state.liveMap = liveResult.map;
+    state.liveUpdatedTime = liveResult.updatedTime;
     state.nextCursor = data.nextPageCursor || null;
     state.prevCursor = data.previousPageCursor || null;
 
-    els.proxyStatusBadge.classList.toggle('hidden', liveMap.size === 0);
+    if (liveResult.map.size > 0) {
+      els.proxyStatusBadge.textContent = liveResult.updatedTime
+        ? `Live ${liveResult.updatedTime}`
+        : 'Live';
+      els.proxyStatusBadge.classList.remove('hidden');
+    } else {
+      els.proxyStatusBadge.classList.add('hidden');
+    }
     els.lastUpdatedLabel.textContent = formatTime(new Date());
 
     renderDirectionFilters();
@@ -619,7 +652,6 @@ function updateBoardSummary() {
 }
 
 function renderDirectionFilters() {
-  // Build unique headsigns from loaded trains (super useful for Vigevano: Milano Rogoredo / Mortara / Alessandria)
   const counts = new Map();
   for (const st of state.rawTrains) {
     const dest = cleanStationDisplayName(st.headsign || '');
@@ -646,7 +678,7 @@ function renderDirectionFilters() {
   const allBtn = document.createElement('button');
   allBtn.type = 'button';
   allBtn.className = `dir-pill${state.activeDirection === 'ALL' ? ' active' : ''}`;
-  allBtn.textContent = 'Tutte le direzioni';
+  allBtn.textContent = 'Tutte';
   allBtn.addEventListener('click', () => {
     state.activeDirection = 'ALL';
     renderDirectionFilters();
@@ -706,17 +738,15 @@ function renderTrainsList() {
     return;
   }
 
-  const nowTs = Date.now();
   const showCountdown = isSameRomeDay(state.targetDate, new Date());
 
   const html = filtered
     .map((st, idx) => {
       const meta = extractTrainMeta(st);
       const primaryIso = isArrivals ? st.place.arrival : st.place.departure;
-      const secondaryIso = isArrivals ? st.place.departure : st.place.arrival;
       const dest = cleanStationDisplayName(st.headsign || 'Destinazione');
 
-      // Check real-time info from Transitous OR optional Viaggiatreno proxy
+      // Live info from live-data snapshot, custom proxy, or Transitous GTFS-RT
       const live = meta.number ? state.liveMap.get(meta.number) : null;
       let delayMin = live?.delay ?? null;
       if (delayMin === null && st.realTime) {
@@ -729,36 +759,46 @@ function renderTrainsList() {
       const track = live?.track || st.place?.track || st.place?.scheduledTrack || null;
       const isCancelled = Boolean(live?.cancelled || st.cancelled);
 
-      let delayHtml = '';
+      // 4 clear color states:
+      // - Black: Cancellato
+      // - Green: In orario (<= 0 min)
+      // - Amber/Yellow: Ritardo lieve (1..10 min)
+      // - Red: Ritardo > 10 min
+      let statusClass = '';
+      let statusPillHtml = '';
       if (isCancelled) {
-        delayHtml = '<span class="train-delay-pill major">Soppresso</span>';
+        statusClass = ' state-cancelled';
+        statusPillHtml = '<span class="train-delay-pill cancelled">Cancellato</span>';
       } else if (delayMin !== null) {
         if (delayMin <= 0) {
-          delayHtml = '<span class="train-delay-pill ontime">In orario</span>';
-        } else if (delayMin < 10) {
-          delayHtml = `<span class="train-delay-pill minor">+${delayMin} min</span>`;
+          statusClass = ' state-ontime';
+          statusPillHtml = '<span class="train-delay-pill ontime">In orario</span>';
+        } else if (delayMin <= 10) {
+          statusClass = ' state-minor';
+          statusPillHtml = `<span class="train-delay-pill minor">+${delayMin} min</span>`;
         } else {
-          delayHtml = `<span class="train-delay-pill major">+${delayMin} min</span>`;
+          statusClass = ' state-major';
+          statusPillHtml = `<span class="train-delay-pill major">+${delayMin} min</span>`;
         }
       }
 
       const cd = showCountdown ? formatCountdown(primaryIso) : { label: '', soon: false };
-      const diffMs = new Date(primaryIso).getTime() - nowTs;
-      const isImminent = showCountdown && diffMs >= -60000 && diffMs <= 15 * 60000;
 
-      // Show passing-train pair (e.g. arr. 14:44) if train both arrives & departs here
-      let stopNote = '';
-      if (secondaryIso && secondaryIso !== primaryIso) {
-        stopNote = isArrivals
-          ? `rip. ${formatTime(secondaryIso)}`
-          : `arr. ${formatTime(secondaryIso)}`;
-      }
+      const trackBoxHtml = track
+        ? `<div class="track-box${live?.isActualTrack ? ' live-track' : ''}" aria-label="Binario ${escapeHtml(track)}">
+             <span class="track-box-label">BIN</span>
+             <span class="track-box-num">${escapeHtml(track)}</span>
+           </div>`
+        : `<div class="track-box empty-track" aria-label="Binario non disponibile">
+             <span class="track-box-label">BIN</span>
+             <span class="track-box-num">—</span>
+           </div>`;
 
       return `
-        <button type="button" class="train-card${isImminent ? ' is-imminent' : ''}${isCancelled ? ' is-cancelled' : ''}" data-train-index="${idx}">
+        <button type="button" class="train-card${statusClass}" data-train-index="${idx}">
           <div class="train-time-col">
             <span class="train-time">${escapeHtml(formatTime(primaryIso))}</span>
-            ${delayHtml || (cd.label ? `<span class="train-countdown${cd.soon ? ' soon' : ''}">${escapeHtml(cd.label)}</span>` : '')}
+            ${statusPillHtml || (cd.label ? `<span class="train-countdown${cd.soon ? ' soon' : ''}">${escapeHtml(cd.label)}</span>` : '')}
           </div>
 
           <div class="train-main-col">
@@ -769,14 +809,13 @@ function renderTrainsList() {
             <div class="train-sub-row">
               <span class="line-badge ${meta.badgeClass}">${escapeHtml(meta.line)}</span>
               ${meta.number && !meta.line.includes(meta.number) ? `<span class="train-number">${escapeHtml(meta.number)}</span>` : ''}
-              ${meta.agency ? `<span class="train-agency">${escapeHtml(meta.agency)}</span>` : ''}
-              ${stopNote ? `<span class="train-stop-note">· ${escapeHtml(stopNote)}</span>` : ''}
+              ${statusPillHtml && cd.label && !isCancelled ? `<span class="train-countdown${cd.soon ? ' soon' : ''}">· ${escapeHtml(cd.label)}</span>` : ''}
             </div>
           </div>
 
           <div class="train-right-col">
-            ${track ? `<span class="track-badge${live?.isActualTrack ? ' live-track' : ''}" title="Binario">Bin. ${escapeHtml(track)}</span>` : ''}
-            <svg class="row-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            ${trackBoxHtml}
+            <svg class="row-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="9 18 15 12 9 6"></polyline>
             </svg>
           </div>

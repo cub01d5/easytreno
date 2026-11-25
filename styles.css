@@ -673,12 +673,12 @@ input:focus-visible {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  padding: 13px 14px;
+  padding: 12px 13px;
   box-shadow: var(--shadow-sm);
   display: grid;
-  grid-template-columns: 74px 1fr auto;
+  grid-template-columns: 78px 1fr auto;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
   transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -691,19 +691,35 @@ input:focus-visible {
   transform: scale(0.988);
 }
 
-.train-card.is-imminent {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+.train-card.state-ontime {
+  border-color: color-mix(in srgb, #108a4c 32%, var(--border-subtle));
 }
 
-.train-card.is-cancelled {
-  opacity: 0.68;
+.train-card.state-minor {
+  background-color: color-mix(in srgb, #f5a600 9%, var(--bg-surface));
+  border-color: color-mix(in srgb, #e09100 40%, var(--border-subtle));
+}
+
+.train-card.state-major {
+  background-color: color-mix(in srgb, #d92d20 9%, var(--bg-surface));
+  border-color: color-mix(in srgb, #d92d20 42%, var(--border-subtle));
+}
+
+.train-card.state-cancelled {
+  background-color: color-mix(in srgb, #111315 8%, var(--bg-surface));
+  border-color: color-mix(in srgb, #111315 35%, var(--border-subtle));
+}
+
+[data-theme="dark"] .train-card.state-cancelled {
+  background-color: #101312;
+  border-color: #3a403d;
 }
 
 .train-time-col {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 5px;
 }
 
 .train-time {
@@ -716,13 +732,13 @@ input:focus-visible {
   color: var(--ink-primary);
 }
 
-.train-card.is-cancelled .train-time {
+.train-card.state-cancelled .train-time {
   text-decoration: line-through;
-  color: var(--status-danger);
+  color: var(--ink-muted);
 }
 
 .train-countdown {
-  font-size: 0.73rem;
+  font-size: 0.74rem;
   font-weight: 700;
   color: var(--ink-muted);
   white-space: nowrap;
@@ -732,48 +748,63 @@ input:focus-visible {
   color: var(--accent-ink);
 }
 
+/* 4-State Status Pills: Green (On Time), Amber (<=10m), Red (>10m), Black (Cancelled) */
 .train-delay-pill {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  justify-content: center;
+  padding: 2px 7px;
   border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.71rem;
   font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
 }
 
 .train-delay-pill.ontime {
-  background-color: var(--status-live-bg);
-  color: var(--status-live);
+  background-color: #0f8a4b;
+  color: #ffffff;
 }
 
 .train-delay-pill.minor {
-  background-color: var(--status-warn-bg);
-  color: var(--status-warn);
+  background-color: #f4b400;
+  color: #1c1400;
 }
 
 .train-delay-pill.major {
-  background-color: var(--status-danger-bg);
-  color: var(--status-danger);
+  background-color: #d92d20;
+  color: #ffffff;
+}
+
+.train-delay-pill.cancelled {
+  background-color: #111315;
+  color: #ffffff;
+}
+
+[data-theme="dark"] .train-delay-pill.cancelled {
+  background-color: #050606;
+  color: #f5f5f5;
+  border: 1px solid #525956;
 }
 
 .train-main-col {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .train-dest-row {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
 .train-dir-arrow {
   color: var(--ink-muted);
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   flex-shrink: 0;
 }
 
@@ -785,6 +816,11 @@ input:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.train-card.state-cancelled .train-destination {
+  text-decoration: line-through;
+  color: var(--ink-secondary);
 }
 
 .train-sub-row {
@@ -838,45 +874,65 @@ input:focus-visible {
   color: var(--ink-muted);
 }
 
-.train-stop-note {
-  font-size: 0.74rem;
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-}
-
 .train-right-col {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
-.track-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  height: 26px;
-  padding: 0 7px;
-  border-radius: 7px;
+/* Prominent Platform (Binario) Tile */
+.track-box {
+  min-width: 46px;
+  height: 46px;
+  padding: 4px 6px;
+  border-radius: 10px;
   background-color: var(--bg-surface-subtle);
   border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.track-box.live-track {
+  background-color: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.track-box.empty-track {
+  opacity: 0.52;
+}
+
+.track-box-label {
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  line-height: 1;
+}
+
+.track-box.live-track .track-box-label {
+  color: var(--accent-ink);
+}
+
+.track-box-num {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
-  font-weight: 700;
+  font-size: 1.08rem;
+  font-weight: 800;
+  line-height: 1.1;
   color: var(--ink-primary);
 }
 
-.track-badge.live-track {
-  background-color: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+.track-box.live-track .track-box-num {
   color: var(--accent-ink);
 }
 
 .row-chevron {
   color: var(--ink-muted);
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 /* Pagination Bar */

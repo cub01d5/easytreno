@@ -1,0 +1,41 @@
+name: Update Live Train Status
+
+on:
+  schedule:
+    # Every 5 minutes during Italian train service hours (~04:00 - 01:00 CET/CEST)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-status-update
+  cancel-in-progress: true
+
+jobs:
+  fetch-live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      - name: Fetch live Viaggiatreno status
+        run: python3 scripts/fetch_live.py /tmp/live.json
+
+      - name: Publish live.json to orphan live-data branch
+        run: |
+          mkdir -p /tmp/live-branch
+          cp /tmp/live.json /tmp/live-branch/live.json
+          cd /tmp/live-branch
+          git init -b live-data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add live.json
+          git commit -m "Live train status update"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin live-data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
