@@ -4,6 +4,7 @@
  */
 
 const TRANSITOUS_BASE = 'https://api.transitous.org/api/v1';
+const LIVE_API_URL = 'https://api.github.com/repos/cub01d5/easytreno/contents/live.json?ref=live-data';
 const LIVE_FEED_URL = 'https://raw.githubusercontent.com/cub01d5/easytreno/live-data/live.json';
 
 const RAIL_MODES = new Set([
@@ -393,17 +394,47 @@ async function searchItalianRailStations(query, signal) {
   return Array.from(byName.values()).slice(0, 12);
 }
 
-async function fetchViaggiatrenoLive(station, boardMode, signal) {
+let liveFeedCache = { feed: null, fetchedAt: 0 };
+
+async function fetchRawLiveFeed(signal, forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && liveFeedCache.feed && now - liveFeedCache.fetchedAt < 45000) {
+    return liveFeedCache.feed;
+  }
+
+  // Primary: GitHub Contents Raw API (60s edge cache, CORS *, 5x fresher than raw.githubusercontent)
+  try {
+    const res = await fetch(LIVE_API_URL, {
+      signal,
+      headers: { Accept: 'application/vnd.github.raw+json' },
+      cache: forceRefresh ? 'no-cache' : 'default',
+    });
+    if (res.ok) {
+      const feed = await res.json();
+      liveFeedCache = { feed, fetchedAt: Date.now() };
+      return feed;
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') throw err;
+  }
+
+  // Fallback: raw.githubusercontent.com (no API rate limit, 5-min CDN cache)
+  const feed = await fetchJson(`${LIVE_FEED_URL}?t=${Math.floor(Date.now() / 60000)}`, signal);
+  liveFeedCache = { feed, fetchedAt: Date.now() };
+  return feed;
+}
+
+async function fetchViaggiatrenoLive(station, boardMode, signal, forceRefresh = false) {
   const empty = { map: new Map(), updatedTime: null, snapshotMs: null, ageMin: null, stale: false };
   if (!station?.vtCode) return empty;
 
   const timeoutCtrl = new AbortController();
-  const timer = setTimeout(() => timeoutCtrl.abort(), 5000);
+  const timer = setTimeout(() => timeoutCtrl.abort(), 6000);
   const onParentAbort = () => timeoutCtrl.abort();
   signal?.addEventListener('abort', onParentAbort, { once: true });
 
   try {
-    const feed = await fetchJson(`${LIVE_FEED_URL}?t=${Math.floor(Date.now() / 60000)}`, timeoutCtrl.signal);
+    const feed = await fetchRawLiveFeed(timeoutCtrl.signal, forceRefresh);
     if (!feed?.updatedAt) return empty;
 
     const snapshotMs = new Date(feed.updatedAt).getTime();
@@ -412,8 +443,8 @@ async function fetchViaggiatrenoLive(station, boardMode, signal) {
     const ageMin = Math.max(0, Math.round((Date.now() - snapshotMs) / 60000));
     const updatedTime = feed.romeTime || formatTime(snapshotMs);
 
-    // Never apply stale live snapshots (> 15 min old) that could show outdated nonPartito/delay status
-    if (ageMin > 15) {
+    // Never apply stale live delays/nonPartito (> 18 min old)
+    if (ageMin > 18) {
       state.liveTrains = {};
       return { map: new Map(), updatedTime, snapshotMs, ageMin, stale: true };
     }
@@ -517,7 +548,7 @@ function renderSkeletons(container, count = 5) {
     .join('');
 }
 
-async function loadBoard({ cursor = null } = {}) {
+async function loadBoard({ cursor = null, forceRefresh = false } = {}) {
   if (!state.activeStation) return;
 
   if (state.boardAbort) state.boardAbort.abort();
@@ -554,7 +585,7 @@ async function loadBoard({ cursor = null } = {}) {
     const [data, liveResult] = await Promise.all([
       fetchJson(url, controller.signal),
       shouldFetchLive
-        ? fetchViaggiatrenoLive(state.activeStation, state.boardMode, controller.signal)
+        ? fetchViaggiatrenoLive(state.activeStation, state.boardMode, controller.signal, forceRefresh)
         : Promise.resolve({ map: new Map(), updatedTime: null, snapshotMs: null, ageMin: null, stale: false }),
     ]);
 
@@ -1585,7 +1616,7 @@ function bindEvents() {
   });
 
   // Refresh button
-  els.refreshBtn.addEventListener('click', () => loadBoard());
+  els.refreshBtn.addEventListener('click', () => loadBoard({ forceRefresh: true }));
 
   // Quick time presets
   els.timePresetsRow.querySelectorAll('.time-pill').forEach((btn) => {

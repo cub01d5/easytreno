@@ -184,15 +184,18 @@ def main() -> None:
         "trains": {},
     }
 
-    all_triples = {}
+    board_tasks = [(kind, code) for code in STATIONS for kind in ("partenze", "arrivi")]
     for code in STATIONS:
-        part, t_part = fetch_board("partenze", code, dt_str)
-        arr, t_arr = fetch_board("arrivi", code, dt_str)
-        payload["stations"][code] = {"partenze": part, "arrivi": arr}
-        all_triples.update(t_part)
-        all_triples.update(t_arr)
+        payload["stations"][code] = {"partenze": {}, "arrivi": {}}
 
+    all_triples = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = [ex.submit(fetch_board, kind, code, dt_str) for kind, code in board_tasks]
+        for (kind, code), fut in zip(board_tasks, futures):
+            board, triples = fut.result()
+            payload["stations"][code][kind] = board
+            all_triples.update(triples)
+
         for num, info in ex.map(fetch_train_stops, all_triples.values()):
             if info:
                 payload["trains"][num] = info
