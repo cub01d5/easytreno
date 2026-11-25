@@ -155,11 +155,18 @@ def fetch_train_stops(triple: tuple[str, str, int]) -> tuple[str, dict | None]:
 
     cancelled = data.get("provvedimento") == 1 or data.get("tipoTreno") == "ST"
 
+    orig_sched_ms = data.get("orarioPartenza")
+    if not isinstance(orig_sched_ms, (int, float)) or orig_sched_ms <= 0:
+        orig_sched_ms = None
+    orig_name = (data.get("origine") or "").strip() or None
+
     return num, {
         "r": ritardo,
         "lu": last_st,
         "lo": last_time,
         "lm": int(last_ms) if last_ms else None,
+        "os": int(orig_sched_ms) if orig_sched_ms else None,
+        "or": orig_name,
         "np": bool(data.get("nonPartito")),
         "c": cancelled,
         "f": stops_map,

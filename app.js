@@ -46,9 +46,11 @@ const state = {
   targetDate: new Date(),
   activeDirection: 'ALL',
   rawTrains: [],
-  liveMap: new Map(), // trainNumber -> { delay, track, isActualTrack, cancelled }
-  liveTrains: {}, // trainNumber -> { r, lu, lo, np, c, f: { vtStopCode: { t, d, st } } }
+  liveMap: new Map(), // trainNumber -> { delay, track, isActualTrack, cancelled, notDeparted }
+  liveTrains: {}, // trainNumber -> { r, lu, lo, lm, os, or, np, c, f }
   liveUpdatedTime: null,
+  liveSnapshotMs: null,
+  liveAgeMin: null,
   nextCursor: null,
   prevCursor: null,
   isLoading: false,
@@ -392,7 +394,7 @@ async function searchItalianRailStations(query, signal) {
 }
 
 async function fetchViaggiatrenoLive(station, boardMode, signal) {
-  const empty = { map: new Map(), updatedTime: null };
+  const empty = { map: new Map(), updatedTime: null, snapshotMs: null, ageMin: null, stale: false };
   if (!station?.vtCode) return empty;
 
   const timeoutCtrl = new AbortController();
@@ -402,15 +404,28 @@ async function fetchViaggiatrenoLive(station, boardMode, signal) {
 
   try {
     const feed = await fetchJson(`${LIVE_FEED_URL}?t=${Math.floor(Date.now() / 60000)}`, timeoutCtrl.signal);
-    if (!feed?.updatedAt || !feed?.stations?.[station.vtCode]) return empty;
+    if (!feed?.updatedAt) return empty;
 
-    // Ignore stale snapshots older than 45 minutes
-    const ageMin = (Date.now() - new Date(feed.updatedAt).getTime()) / 60000;
-    if (ageMin > 45) return empty;
+    const snapshotMs = new Date(feed.updatedAt).getTime();
+    if (Number.isNaN(snapshotMs)) return empty;
+
+    const ageMin = Math.max(0, Math.round((Date.now() - snapshotMs) / 60000));
+    const updatedTime = feed.romeTime || formatTime(snapshotMs);
+
+    // Never apply stale live snapshots (> 15 min old) that could show outdated nonPartito/delay status
+    if (ageMin > 15) {
+      state.liveTrains = {};
+      return { map: new Map(), updatedTime, snapshotMs, ageMin, stale: true };
+    }
 
     state.liveTrains = feed.trains && typeof feed.trains === 'object' ? feed.trains : {};
 
-    const bucket = feed.stations[station.vtCode][boardMode === 'arrivals' ? 'arrivi' : 'partenze'] || {};
+    const stationBucket = feed.stations?.[station.vtCode];
+    if (!stationBucket) {
+      return { map: new Map(), updatedTime, snapshotMs, ageMin, stale: false };
+    }
+
+    const bucket = stationBucket[boardMode === 'arrivals' ? 'arrivi' : 'partenze'] || {};
     const map = new Map();
     for (const [num, entry] of Object.entries(bucket)) {
       map.set(num, {
@@ -418,9 +433,10 @@ async function fetchViaggiatrenoLive(station, boardMode, signal) {
         track: entry.b ? String(entry.b).trim() : null,
         isActualTrack: Boolean(entry.be),
         cancelled: Boolean(entry.c),
+        notDeparted: Boolean(entry.np),
       });
     }
-    return { map, updatedTime: feed.romeTime || formatTime(feed.updatedAt) };
+    return { map, updatedTime, snapshotMs, ageMin, stale: false };
   } catch {
     return empty;
   } finally {
@@ -539,7 +555,7 @@ async function loadBoard({ cursor = null } = {}) {
       fetchJson(url, controller.signal),
       shouldFetchLive
         ? fetchViaggiatrenoLive(state.activeStation, state.boardMode, controller.signal)
-        : Promise.resolve({ map: new Map(), updatedTime: null }),
+        : Promise.resolve({ map: new Map(), updatedTime: null, snapshotMs: null, ageMin: null, stale: false }),
     ]);
 
     if (controller.signal.aborted) return;
@@ -565,13 +581,25 @@ async function loadBoard({ cursor = null } = {}) {
     state.rawTrains = items;
     state.liveMap = liveResult.map;
     state.liveUpdatedTime = liveResult.updatedTime;
+    state.liveSnapshotMs = liveResult.stale ? null : liveResult.snapshotMs;
+    state.liveAgeMin = liveResult.ageMin;
     state.nextCursor = data.nextPageCursor || null;
     state.prevCursor = data.previousPageCursor || null;
 
-    if (liveResult.map.size > 0) {
-      els.proxyStatusBadge.textContent = liveResult.updatedTime
-        ? `Live ${liveResult.updatedTime}`
-        : 'Live';
+    els.proxyStatusBadge.classList.remove('is-aging', 'is-stale');
+    if (liveResult.stale) {
+      els.proxyStatusBadge.textContent = 'Orari programmati';
+      els.proxyStatusBadge.classList.add('is-stale');
+      els.proxyStatusBadge.classList.remove('hidden');
+    } else if (liveResult.map.size > 0) {
+      if (liveResult.ageMin >= 9) {
+        els.proxyStatusBadge.textContent = `Live ${liveResult.updatedTime} (${liveResult.ageMin}m fa)`;
+        els.proxyStatusBadge.classList.add('is-aging');
+      } else {
+        els.proxyStatusBadge.textContent = liveResult.updatedTime
+          ? `Live ${liveResult.updatedTime}`
+          : 'Live';
+      }
       els.proxyStatusBadge.classList.remove('hidden');
     } else {
       els.proxyStatusBadge.classList.add('hidden');
@@ -665,6 +693,89 @@ function renderDirectionFilters() {
   els.directionFilterRow.classList.remove('hidden');
 }
 
+/**
+ * Single source of truth for a train's live status across both the main board card
+ * and the stop-by-stop detail sheet.
+ */
+function resolveTrainLiveState({ st, liveEntry, liveTrain, isArrivals, fallbackOriginMs = null }) {
+  const isCancelled = Boolean(liveEntry?.cancelled || liveTrain?.c || st?.cancelled);
+
+  let rawDelay =
+    typeof liveEntry?.delay === 'number'
+      ? liveEntry.delay
+      : typeof liveTrain?.r === 'number'
+        ? liveTrain.r
+        : null;
+
+  if (rawDelay === null && st?.realTime) {
+    const primaryIso = isArrivals ? st.place?.arrival : st.place?.departure;
+    const schedIso = isArrivals ? st.place?.scheduledArrival : st.place?.scheduledDeparture;
+    if (schedIso && primaryIso) {
+      rawDelay = Math.round((new Date(primaryIso) - new Date(schedIso)) / 60000);
+    }
+  }
+
+  const hasAnyPassedStop =
+    Boolean(liveTrain?.lu) ||
+    Boolean(liveTrain?.f && Object.values(liveTrain.f).some((f) => f?.st === 1));
+
+  const rawNotDeparted = !isCancelled && !hasAnyPassedStop && Boolean(liveTrain?.np ?? liveEntry?.notDeparted);
+  const originSchedMs =
+    typeof liveTrain?.os === 'number'
+      ? liveTrain.os
+      : typeof fallbackOriginMs === 'number' && !Number.isNaN(fallbackOriginMs)
+        ? fallbackOriginMs
+        : null;
+  const originName = liveTrain?.or ? cleanStationDisplayName(liveTrain.or) : null;
+
+  let delayMin = rawDelay;
+  let isOverdueNotDeparted = false;
+  let isFutureNotDeparted = false;
+
+  if (rawNotDeparted) {
+    const snapMs = state.liveSnapshotMs;
+    const nowMs = Date.now();
+    if (originSchedMs && snapMs) {
+      // Case 1: At the live snapshot moment, origin departure time had ALREADY passed and train STILL hadn't left!
+      if (snapMs >= originSchedMs + 60000) {
+        const overdueMin = Math.max(1, Math.round((Math.max(nowMs, snapMs) - originSchedMs) / 60000));
+        delayMin = Math.max(rawDelay ?? 0, overdueMin);
+        isOverdueNotDeparted = true;
+      } else if (nowMs < originSchedMs) {
+        // Case 2: Train simply isn't due to depart from origin yet
+        isFutureNotDeparted = true;
+      }
+      // Case 3: snapMs < originSchedMs <= nowMs -> snapshot was taken before origin departure,
+      // so we cannot falsely claim it still hasn't left right now. Leave as neutral/scheduled.
+    } else if (originSchedMs) {
+      if (Date.now() < originSchedMs) isFutureNotDeparted = true;
+    } else if (rawDelay !== null && rawDelay > 0) {
+      isOverdueNotDeparted = true;
+    }
+  }
+
+  let stateClass = '';
+  if (isCancelled) {
+    stateClass = ' state-cancelled';
+  } else if (typeof delayMin === 'number') {
+    if (delayMin <= 0) stateClass = ' state-ontime';
+    else if (delayMin <= 10) stateClass = ' state-minor';
+    else stateClass = ' state-major';
+  }
+
+  return {
+    isCancelled,
+    delayMin,
+    isOverdueNotDeparted,
+    isFutureNotDeparted,
+    originSchedMs,
+    originName,
+    stateClass,
+    track: liveEntry?.track || st?.place?.track || st?.place?.scheduledTrack || null,
+    isActualTrack: Boolean(liveEntry?.isActualTrack),
+  };
+}
+
 function renderTrainsList() {
   const isArrivals = state.boardMode === 'arrivals';
   const filtered =
@@ -707,48 +818,42 @@ function renderTrainsList() {
       const primaryIso = isArrivals ? st.place.arrival : st.place.departure;
       const dest = cleanStationDisplayName(st.headsign || 'Destinazione');
 
-      // Live info from live-data snapshot, custom proxy, or Transitous GTFS-RT
-      const live = meta.number ? state.liveMap.get(meta.number) : null;
-      let delayMin = live?.delay ?? null;
-      if (delayMin === null && st.realTime) {
-        const schedIso = isArrivals ? st.place.scheduledArrival : st.place.scheduledDeparture;
-        if (schedIso && primaryIso) {
-          delayMin = Math.round((new Date(primaryIso) - new Date(schedIso)) / 60000);
-        }
+      const liveEntry = meta.number ? state.liveMap.get(meta.number) : null;
+      const liveTrain = meta.number ? state.liveTrains?.[meta.number] || null : null;
+
+      const status = resolveTrainLiveState({
+        st,
+        liveEntry,
+        liveTrain,
+        isArrivals,
+      });
+
+      const statusPillHtml = buildDelayPillHtml(status.delayMin, status.isCancelled, 'Cancellato');
+
+      // Compute coherent estimated countdown (never show bogus "tra 4 min" if train hasn't departed or is delayed!)
+      const effectiveDelayForEta = typeof status.delayMin === 'number' ? Math.max(0, status.delayMin) : 0;
+      const estMs = primaryIso ? new Date(primaryIso).getTime() + effectiveDelayForEta * 60000 : NaN;
+      const estIso = !Number.isNaN(estMs) ? new Date(estMs).toISOString() : primaryIso;
+      const cd = showCountdown ? formatCountdown(estIso) : { label: '', soon: false };
+
+      let subStatusHtml = '';
+      if (status.isCancelled) {
+        subStatusHtml = '';
+      } else if (status.isOverdueNotDeparted) {
+        const noteCls = status.delayMin > 10 ? 'train-note-danger' : 'train-note-warn';
+        subStatusHtml = `<span class="${noteCls}">· Non ancora partito</span>`;
+      } else if (typeof status.delayMin === 'number' && status.delayMin > 0) {
+        const estTimeStr = formatTime(estIso);
+        const cdPart = cd.label ? ` (${cd.label})` : '';
+        subStatusHtml = `<span class="train-countdown">· prev. ${escapeHtml(estTimeStr)}${escapeHtml(cdPart)}</span>`;
+      } else if (statusPillHtml && cd.label) {
+        subStatusHtml = `<span class="train-countdown${cd.soon ? ' soon' : ''}">· ${escapeHtml(cd.label)}</span>`;
       }
 
-      const track = live?.track || st.place?.track || st.place?.scheduledTrack || null;
-      const isCancelled = Boolean(live?.cancelled || st.cancelled);
-
-      // 4 clear color states:
-      // - Black: Cancellato
-      // - Green: In orario (<= 0 min)
-      // - Amber/Yellow: Ritardo lieve (1..10 min)
-      // - Red: Ritardo > 10 min
-      let statusClass = '';
-      let statusPillHtml = '';
-      if (isCancelled) {
-        statusClass = ' state-cancelled';
-        statusPillHtml = '<span class="train-delay-pill cancelled">Cancellato</span>';
-      } else if (delayMin !== null) {
-        if (delayMin <= 0) {
-          statusClass = ' state-ontime';
-          statusPillHtml = '<span class="train-delay-pill ontime">In orario</span>';
-        } else if (delayMin <= 10) {
-          statusClass = ' state-minor';
-          statusPillHtml = `<span class="train-delay-pill minor">+${delayMin} min</span>`;
-        } else {
-          statusClass = ' state-major';
-          statusPillHtml = `<span class="train-delay-pill major">+${delayMin} min</span>`;
-        }
-      }
-
-      const cd = showCountdown ? formatCountdown(primaryIso) : { label: '', soon: false };
-
-      const trackBoxHtml = track
-        ? `<div class="track-box${live?.isActualTrack ? ' live-track' : ''}" aria-label="Binario ${escapeHtml(track)}">
+      const trackBoxHtml = status.track
+        ? `<div class="track-box${status.isActualTrack ? ' live-track' : ''}" aria-label="Binario ${escapeHtml(status.track)}">
              <span class="track-box-label">BIN</span>
-             <span class="track-box-num">${escapeHtml(track)}</span>
+             <span class="track-box-num">${escapeHtml(status.track)}</span>
            </div>`
         : `<div class="track-box empty-track" aria-label="Binario non disponibile">
              <span class="track-box-label">BIN</span>
@@ -756,7 +861,7 @@ function renderTrainsList() {
            </div>`;
 
       return `
-        <button type="button" class="train-card${statusClass}" data-train-index="${idx}">
+        <button type="button" class="train-card${status.stateClass}" data-train-index="${idx}">
           <div class="train-time-col">
             <span class="train-time">${escapeHtml(formatTime(primaryIso))}</span>
             ${statusPillHtml || (cd.label ? `<span class="train-countdown${cd.soon ? ' soon' : ''}">${escapeHtml(cd.label)}</span>` : '')}
@@ -770,7 +875,7 @@ function renderTrainsList() {
             <div class="train-sub-row">
               <span class="line-badge ${meta.badgeClass}">${escapeHtml(meta.line)}</span>
               ${meta.number && !meta.line.includes(meta.number) ? `<span class="train-number">${escapeHtml(meta.number)}</span>` : ''}
-              ${statusPillHtml && cd.label && !isCancelled ? `<span class="train-countdown${cd.soon ? ' soon' : ''}">· ${escapeHtml(cd.label)}</span>` : ''}
+              ${subStatusHtml}
             </div>
           </div>
 
@@ -895,34 +1000,55 @@ async function openTrainDetailSheet(trainItem) {
     const destName = cleanStationDisplayName(leg.to.name);
     els.trainSheetSubtitle.textContent = `${originName} → ${destName} · ${stops.length} fermate`;
 
-    // Look up live Viaggiatreno stop-by-stop info for today's trains
+    // Look up unified live state for today's trains
     const isToday = isSameRomeDay(state.targetDate, new Date());
     const liveTrain = isToday && meta.number ? state.liveTrains?.[meta.number] || null : null;
+    const liveEntry = isToday && meta.number ? state.liveMap.get(meta.number) || null : null;
     const liveStops = liveTrain?.f || null;
 
+    const firstStopIso = stops[0]?.scheduledDeparture || stops[0]?.departure || null;
+    const fallbackOriginMs = firstStopIso ? new Date(firstStopIso).getTime() : null;
+
+    const status = resolveTrainLiveState({
+      st: trainItem,
+      liveEntry,
+      liveTrain,
+      isArrivals: state.boardMode === 'arrivals',
+      fallbackOriginMs,
+    });
+
     let bannerHtml = '';
-    if (liveTrain) {
-      if (liveTrain.c) {
+    if (liveTrain || liveEntry) {
+      if (status.isCancelled) {
         bannerHtml = `
           <div class="train-live-banner">
             <span>Treno <strong>cancellato</strong></span>
             ${buildDelayPillHtml(null, true, 'Cancellato')}
           </div>
         `;
-      } else if (liveTrain.lu) {
+      } else if (status.isOverdueNotDeparted) {
+        const fromSt = status.originName || originName;
+        bannerHtml = `
+          <div class="train-live-banner">
+            <span><strong>Non ancora partito</strong> da ${escapeHtml(fromSt)}</span>
+            ${buildDelayPillHtml(status.delayMin, false)}
+          </div>
+        `;
+      } else if (liveTrain?.lu) {
         const lastSt = cleanStationDisplayName(liveTrain.lu);
         const lastAt = liveTrain.lo ? ` alle <strong>${escapeHtml(liveTrain.lo)}</strong>` : '';
         bannerHtml = `
           <div class="train-live-banner">
             <span>Ultimo passaggio: <strong>${escapeHtml(lastSt)}</strong>${lastAt}</span>
-            ${buildDelayPillHtml(liveTrain.r, false)}
+            ${buildDelayPillHtml(status.delayMin, false)}
           </div>
         `;
-      } else if (liveTrain.np) {
+      } else if (status.isFutureNotDeparted) {
+        const depOrig = status.originSchedMs ? formatTime(new Date(status.originSchedMs)) : formatTime(firstStopIso);
         bannerHtml = `
           <div class="train-live-banner">
-            <span>Stato: <strong>Non ancora partito</strong></span>
-            ${buildDelayPillHtml(liveTrain.r, false)}
+            <span>Parte da <strong>${escapeHtml(originName)}</strong> alle <strong>${escapeHtml(depOrig)}</strong></span>
+            ${buildDelayPillHtml(status.delayMin, false)}
           </div>
         `;
       }
@@ -932,7 +1058,7 @@ async function openTrainDetailSheet(trainItem) {
     let lastPassedIdx = -1;
     let checkpointStopIdx = -1;
 
-    if (liveStops) {
+    if (liveStops && !status.isOverdueNotDeparted && !status.isFutureNotDeparted) {
       stops.forEach((s, i) => {
         const vtCode = deriveVtCode(s.stopId);
         const sl = vtCode ? liveStops[vtCode] : null;
@@ -940,16 +1066,17 @@ async function openTrainDetailSheet(trainItem) {
       });
     }
 
-    if (liveTrain && !liveTrain.c && !liveTrain.np && liveTrain.lu) {
+    if (liveTrain && !status.isCancelled && !status.isOverdueNotDeparted && !status.isFutureNotDeparted && liveTrain.lu) {
       const matchIdx = stops.findIndex((s) => checkpointMatchesStop(liveTrain.lu, s.name));
       if (matchIdx !== -1) {
-        const schedIso = stops[matchIdx].scheduledDeparture || stops[matchIdx].scheduledArrival || stops[matchIdx].departure || stops[matchIdx].arrival;
+        const schedIso =
+          stops[matchIdx].scheduledDeparture ||
+          stops[matchIdx].scheduledArrival ||
+          stops[matchIdx].departure ||
+          stops[matchIdx].arrival;
         const schedMs = schedIso ? new Date(schedIso).getTime() : NaN;
         const lastMs = typeof liveTrain.lm === 'number' ? liveTrain.lm : NaN;
 
-        // If checkpoint timestamp is at/after stop's scheduled time (within 1 min tolerance),
-        // or no timestamp available, treat the stop itself as passed at liveTrain.lo;
-        // otherwise (e.g. approaching PC Gaggiano from east), all stops strictly before it are passed.
         const reachedStop = Number.isNaN(lastMs) || Number.isNaN(schedMs) || lastMs >= schedMs - 60000;
         if (reachedStop) {
           checkpointStopIdx = matchIdx;
@@ -971,11 +1098,12 @@ async function openTrainDetailSheet(trainItem) {
         const vtCode = deriveVtCode(s.stopId);
         const stopLive = vtCode && liveStops ? liveStops[vtCode] : null;
 
-        const isCancelledStop = Boolean(liveTrain?.c || stopLive?.st === 3);
-        const hasStopClock = !isCancelledStop && Boolean(stopLive?.st === 1 && stopLive?.t);
+        const isCancelledStop = Boolean(status.isCancelled || stopLive?.st === 3);
+        const hasStopClock = !isCancelledStop && !status.isOverdueNotDeparted && Boolean(stopLive?.st === 1 && stopLive?.t);
         const hasCheckpointPass =
           !isCancelledStop && !hasStopClock && i === checkpointStopIdx && Boolean(liveTrain?.lo);
-        const isPassed = !isCancelledStop && (hasStopClock || hasCheckpointPass || (lastPassedIdx !== -1 && i <= lastPassedIdx));
+        const isPassed =
+          !isCancelledStop && (hasStopClock || hasCheckpointPass || (lastPassedIdx !== -1 && i <= lastPassedIdx));
 
         const classes = [];
         if (isCancelledStop) {
@@ -984,7 +1112,7 @@ async function openTrainDetailSheet(trainItem) {
           classes.push('is-passed');
           if (i < lastPassedIdx) classes.push('rail-bottom-passed');
           if (i === lastPassedIdx) classes.push('is-last-passed');
-        } else if (lastPassedIdx === -1 && activeIdx !== -1 && i < activeIdx) {
+        } else if (lastPassedIdx === -1 && !status.isOverdueNotDeparted && !status.isFutureNotDeparted && activeIdx !== -1 && i < activeIdx) {
           classes.push('is-past');
         } else {
           classes.push('is-future');
@@ -1005,16 +1133,22 @@ async function openTrainDetailSheet(trainItem) {
         } else if (hasCheckpointPass) {
           rightCellHtml = `
             <span class="stop-actual-time">Passato ${escapeHtml(liveTrain.lo)}</span>
-            ${buildDelayPillHtml(liveTrain.r, false)}
+            ${buildDelayPillHtml(status.delayMin, false)}
           `;
         } else if (isPassed) {
           rightCellHtml = `<span class="stop-pending-label">Passato</span>`;
-        } else if (liveTrain && !liveTrain.np && typeof liveTrain.r === 'number') {
-          const estDelay = Math.max(0, liveTrain.r);
+        } else if (status.isOverdueNotDeparted && typeof status.delayMin === 'number') {
+          const estTime = addMinutesToIso(schedIso, Math.max(1, status.delayMin));
+          rightCellHtml = `
+            ${estTime ? `<span class="stop-actual-time is-est">Prev. ≥ ${escapeHtml(estTime)}</span>` : ''}
+            ${buildDelayPillHtml(status.delayMin, false)}
+          `;
+        } else if (!status.isFutureNotDeparted && typeof status.delayMin === 'number') {
+          const estDelay = Math.max(0, status.delayMin);
           const estTime = addMinutesToIso(schedIso, estDelay);
           rightCellHtml = `
             ${estTime ? `<span class="stop-actual-time is-est">Prev. ${escapeHtml(estTime)}</span>` : ''}
-            ${buildDelayPillHtml(liveTrain.r, false)}
+            ${buildDelayPillHtml(status.delayMin, false)}
           `;
         } else {
           rightCellHtml = `<span class="stop-pending-label">Previsto</span>`;

@@ -660,6 +660,16 @@ input:focus-visible {
   font-weight: 700;
 }
 
+.proxy-active-badge.is-aging {
+  background-color: var(--status-warn-bg);
+  color: var(--status-warn);
+}
+
+.proxy-active-badge.is-stale {
+  background-color: var(--bg-surface-subtle);
+  color: var(--ink-muted);
+}
+
 /* Train Cards List */
 .trains-list {
   display: flex;
@@ -746,6 +756,20 @@ input:focus-visible {
 
 .train-countdown.soon {
   color: var(--accent-ink);
+}
+
+.train-note-warn {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--status-warn);
+  white-space: nowrap;
+}
+
+.train-note-danger {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--status-danger);
+  white-space: nowrap;
 }
 
 /* 4-State Status Pills: Green (On Time), Amber (<=10m), Red (>10m), Black (Cancelled) */
